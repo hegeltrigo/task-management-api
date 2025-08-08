@@ -5,20 +5,16 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { TaskFilterDto } from './dto/task-filter.dto';
 import { Task, Prisma, TaskPriority, TaskStatus } from '@prisma/client';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import type { Cache } from 'cache-manager';
+import { PaginationService } from './pagination.service';
+
 
 @Injectable()
 export class TasksService {
-  private readonly DEFAULT_LIMIT = 25;
-  private readonly MAX_LIMIT = 100;
-  // Time of caché (1 minuto en ms)
-  private readonly CACHE_TTL = 60 * 1000; 
 
   constructor(
     private prisma: PrismaService,
     private emailService: EmailService,
-    @Inject(CACHE_MANAGER) private cache: Cache
+    private readonly paginationService: PaginationService
   ) {}
 
   async findAll(params: {
@@ -29,66 +25,24 @@ export class TasksService {
     search?: string;
     page?: number;
     limit?: number;
-  }): Promise<{ data: Task[]; total: number; page: number; totalPages: number }> {
-    // Calculate real limit
-    const take = Math.min(params.limit || this.DEFAULT_LIMIT, this.MAX_LIMIT);
-    const page = params.page || 1;
-    const skip = (page - 1) * take;
-
-    // Generate unique cache key
-    const cacheKey = this.generateCacheKey(params, take, page);
-
-    try {
-      const cached = await this.cache.get<{
-        data: Task[];
-        total: number;
-      }>(cacheKey);
-      if (cached) {
-        return {
-          ...cached,
-          page,
-          totalPages: Math.ceil(cached.total / take),
-        };
-      }
-    } catch (error) {
-      console.error('Redis error:', error);
-    }
-
+  }) {
     const where = this.buildWhereConditions(params);
 
-    // execute query and counter in parallel
-    const [data, total] = await Promise.all([
-      this.prisma.task.findMany({
-        where,
-        take,
-        skip,
-        include: {
-          assignee: true,
-          project: true,
-          tags: true,
-        },
-        orderBy: { createdAt: 'desc' },
-      }),
-      this.prisma.task.count({ where }),
-    ]);
-
-    const totalPages = Math.ceil(total / take);
-
-    // save in cache
-    try {
-      await this.cache.set(
-        cacheKey,
-        { data, total },
-        this.CACHE_TTL
-      );
-    } catch (error) {
-      console.error('Redis save error:', error);
-    }
-
-    return { data, total, page, totalPages };
+    return this.paginationService.paginate<Task>('task', {
+      where,
+      include: {
+        assignee: true,
+        project: true,
+        tags: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      page: params.page,
+      limit: params.limit,
+      cacheKeyPrefix: 'tasks',
+    });
   }
 
-  private buildWhereConditions(params: any): any {
+  private buildWhereConditions(params: any) {
     const where: any = {};
 
     if (params.status) where.status = params.status;
@@ -104,24 +58,6 @@ export class TasksService {
     }
 
     return where;
-  }
-
-  private generateCacheKey(params: any, limit: number, page: number): string {
-    return [
-      'tasks',
-      params.status,
-      params.priority,
-      params.assigneeId,
-      params.projectId,
-      params.search,
-      `limit=${limit}`,
-      `page=${page}`,
-    ].join(':');
-  }
-
-  async clearCache(): Promise<void> {
-    const keys = await this.cache.store.keys?.('tasks:*') || [];
-    await Promise.all(keys.map(key => this.cache.del(key)));
   }
 
   async findOne(id: string) {

@@ -23,6 +23,8 @@ Optimize queries with includes for relations.
 /tasks
 Actual (N+1)	    ~500ms	~5000ms
 Optimized (join)	~50ms	~200ms
+actual ![alt text](image.png)
+optimez ![alt text](image-1.png)
 
 ## Part 2: Activity Log Feature
 

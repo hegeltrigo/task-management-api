@@ -6,7 +6,8 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { TaskFilterDto } from './dto/task-filter.dto';
 import { Task, Prisma, TaskPriority, TaskStatus } from '@prisma/client';
 import { PaginationService } from './pagination.service';
-
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
 
 @Injectable()
 export class TasksService {
@@ -14,7 +15,8 @@ export class TasksService {
   constructor(
     private prisma: PrismaService,
     private emailService: EmailService,
-    private readonly paginationService: PaginationService
+    private readonly paginationService: PaginationService,
+    @InjectQueue('notifications') private readonly notificationsQueue: Queue,
   ) {}
 
   async findAll(params: {
@@ -77,6 +79,40 @@ export class TasksService {
     return task;
   }
 
+  // async create(createTaskDto: CreateTaskDto) {
+  //   const task = await this.prisma.task.create({
+  //     data: {
+  //       title: createTaskDto.title,
+  //       description: createTaskDto.description,
+  //       status: createTaskDto.status,
+  //       priority: createTaskDto.priority,
+  //       dueDate: createTaskDto.dueDate,
+  //       project: { connect: { id: createTaskDto.projectId } },
+  //       assignee: createTaskDto.assigneeId 
+  //         ? { connect: { id: createTaskDto.assigneeId } }
+  //         : undefined,
+  //       tags: createTaskDto.tagIds
+  //         ? { connect: createTaskDto.tagIds.map(id => ({ id })) }
+  //         : undefined,
+  //     },
+  //     include: {
+  //       assignee: true,
+  //       project: true,
+  //       tags: true,
+  //     },
+  //   });
+
+  //   // PERFORMANCE ISSUE: Synchronous email notification blocking response
+  //   if (task.assignee) {
+  //     await this.emailService.sendTaskAssignmentNotification(
+  //       task.assignee.email,
+  //       task.title
+  //     );
+  //   }
+
+  //   return task;
+  // }
+  
   async create(createTaskDto: CreateTaskDto) {
     const task = await this.prisma.task.create({
       data: {
@@ -100,12 +136,14 @@ export class TasksService {
       },
     });
 
-    // PERFORMANCE ISSUE: Synchronous email notification blocking response
     if (task.assignee) {
-      await this.emailService.sendTaskAssignmentNotification(
-        task.assignee.email,
-        task.title
-      );
+      await this.notificationsQueue.add('task-assigned', {
+        assigneeEmail: task.assignee.email,
+        taskTitle: task.title,
+      }, {
+        attempts: 3, // 3 reintentos
+        backoff: 5000, // 5 segundos entre intentos
+      });
     }
 
     return task;

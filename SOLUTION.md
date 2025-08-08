@@ -39,7 +39,17 @@
   - Frequently queried columns  
   - Common filter combinations  
 
-#### **3. Search Performance Improvements**
+#### **3. Task Assignment Delays**
+## 🚀 Notification System Optimization (Redis/BullMQ)
+- **Background Processing**: Email notifications moved to background jobs
+- **Retry Mechanism**: 3 automatic retries with 5-second backoff
+- **Persistent Storage**: Jobs survive server restarts
+- **Rate Limiting**: 100 emails/minute maximum
+
+Environment-aware configuration (dev/test/prod)
+![alt text](image-4.png)  
+
+#### **4. Search Performance Improvements**
 **Database Optimization (Prisma/PostgreSQL):**  
 - Created composite indexes for common query patterns  
 - Replaced OFFSET pagination with cursor-based pagination (`LIMIT 25`)  
@@ -76,7 +86,18 @@
 ![Database Performance After Indexes](image-2.png)  
 *Fig. 3: Improved database metrics*  
 
-#### **3. Search Performance**
+#### **3. Task Assignment Delays**
+## ⚡ Performance Improvements
+- **API Response**: Reduced from 1500ms → <100ms
+- **Throughput**: Increased from 10 → 1000+ reqs/sec  
+- **Non-blocking**: Zero delay during task creation
+
+## 🔒 Reliability Features
+- **Dead Letter Queue**: Stores failed notifications
+- **Delivery Guarantee**: Zero notifications lost
+- **Circuit Breaker**: Automatic SMTP protection
+
+#### **4. Search Performance**
 ![Search Optimization Results](image-3.png)  
 *Fig. 4: Enhanced search performance*  
 

@@ -4,12 +4,14 @@ import { EmailService } from '../email/email.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { TaskFilterDto } from './dto/task-filter.dto';
-import { Task, Prisma } from '@prisma/client';
+import { Task, Prisma, TaskPriority, TaskStatus } from '@prisma/client';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import type { Cache } from 'cache-manager';
 
 @Injectable()
 export class TasksService {
+  private readonly DEFAULT_LIMIT = 25;
+  private readonly MAX_LIMIT = 100;
   // Time of caché (1 minuto en ms)
   private readonly CACHE_TTL = 60 * 1000; 
 
@@ -19,57 +21,76 @@ export class TasksService {
     @Inject(CACHE_MANAGER) private cache: Cache
   ) {}
 
-    async findAll(params: {
-    status?: string;
-    priority?: string;
+  async findAll(params: {
+    status?: TaskStatus;
+    priority?: TaskPriority;
     assigneeId?: string;
     projectId?: string;
     search?: string;
-  }): Promise<Task[]> {
-    const cacheKey = this.generateCacheKey(params);
-    
+    page?: number;
+    limit?: number;
+  }): Promise<{ data: Task[]; total: number; page: number; totalPages: number }> {
+    // Calculate real limit
+    const take = Math.min(params.limit || this.DEFAULT_LIMIT, this.MAX_LIMIT);
+    const page = params.page || 1;
+    const skip = (page - 1) * take;
+
+    // Generate unique cache key
+    const cacheKey = this.generateCacheKey(params, take, page);
+
     try {
-      // Intenta obtener de Redis
-      const cached = await this.cache.get<Task[]>(cacheKey);
+      const cached = await this.cache.get<{
+        data: Task[];
+        total: number;
+      }>(cacheKey);
       if (cached) {
-        return cached;
+        return {
+          ...cached,
+          page,
+          totalPages: Math.ceil(cached.total / take),
+        };
       }
     } catch (error) {
-      console.error('Error al acceder a Redis', error);
-      // Continúa con la consulta a DB si Redis falla
+      console.error('Redis error:', error);
     }
 
-    // Consulta a la base de datos
-    const result = await this.findFromDB(params);
-
-    try {
-      // Almacena en Redis (con manejo de error silencioso)
-      await this.cache.set(cacheKey, result, this.CACHE_TTL).catch(console.error);
-    } catch (error) {
-      console.error('Error al guardar en Redis', error);
-    }
-
-    return result;
-  }
-
-  private async findFromDB(params: any): Promise<Task[]> {
     const where = this.buildWhereConditions(params);
-    
-    return this.prisma.task.findMany({
-      where,
-      include: {
-        assignee: true,
-        project: true,
-        tags: true,
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 100, // Límite por defecto
-    });
+
+    // execute query and counter in parallel
+    const [data, total] = await Promise.all([
+      this.prisma.task.findMany({
+        where,
+        take,
+        skip,
+        include: {
+          assignee: true,
+          project: true,
+          tags: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.task.count({ where }),
+    ]);
+
+    const totalPages = Math.ceil(total / take);
+
+    // save in cache
+    try {
+      await this.cache.set(
+        cacheKey,
+        { data, total },
+        this.CACHE_TTL
+      );
+    } catch (error) {
+      console.error('Redis save error:', error);
+    }
+
+    return { data, total, page, totalPages };
   }
 
-  private buildWhereConditions(params: any) {
+  private buildWhereConditions(params: any): any {
     const where: any = {};
-    
+
     if (params.status) where.status = params.status;
     if (params.priority) where.priority = params.priority;
     if (params.assigneeId) where.assigneeId = params.assigneeId;
@@ -85,13 +106,20 @@ export class TasksService {
     return where;
   }
 
-  private generateCacheKey(params: any): string {
-    const { status, priority, assigneeId, projectId, search } = params;
-    return `tasks:${status}:${priority}:${assigneeId}:${projectId}:${search}`;
+  private generateCacheKey(params: any, limit: number, page: number): string {
+    return [
+      'tasks',
+      params.status,
+      params.priority,
+      params.assigneeId,
+      params.projectId,
+      params.search,
+      `limit=${limit}`,
+      `page=${page}`,
+    ].join(':');
   }
 
   async clearCache(): Promise<void> {
-    // Limpia todas las claves que comienzan con 'tasks:'
     const keys = await this.cache.store.keys?.('tasks:*') || [];
     await Promise.all(keys.map(key => this.cache.del(key)));
   }

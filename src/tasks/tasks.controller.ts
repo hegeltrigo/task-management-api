@@ -3,14 +3,15 @@ import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { TaskFilterDto } from './dto/task-filter.dto';
+import { FindAllTasksDto } from './dto/find-all-tasks.dto';
 
 @Controller('tasks')
 export class TasksController {
   constructor(private readonly tasksService: TasksService) {}
 
   @Get()
-  findAll(@Query() filterDto: TaskFilterDto) {
-    return this.tasksService.findAll(filterDto);
+  async findAll(@Query() params: FindAllTasksDto) {
+    return this.tasksService.findAll(params);
   }
 
   @Get(':id')

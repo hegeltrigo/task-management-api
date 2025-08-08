@@ -14,7 +14,8 @@ import { NotificationsProcessor } from './notifications.processor';
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
         redis: {
-          url: configService.get('REDIS_URL'),
+          host: configService.get('REDIS_HOST'),  // Ex: 'localhost'
+          port: configService.get('REDIS_PORT'),  // Ex: 6379
         },
       }),
       inject: [ConfigService],

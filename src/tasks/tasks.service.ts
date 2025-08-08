@@ -1,36 +1,99 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { TaskFilterDto } from './dto/task-filter.dto';
 import { Task, Prisma } from '@prisma/client';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 
 @Injectable()
 export class TasksService {
+  // Time of caché (1 minuto en ms)
+  private readonly CACHE_TTL = 60 * 1000; 
+
   constructor(
     private prisma: PrismaService,
     private emailService: EmailService,
+    @Inject(CACHE_MANAGER) private cache: Cache
   ) {}
 
-  async findAll(filterDto: TaskFilterDto) {
+    async findAll(params: {
+    status?: string;
+    priority?: string;
+    assigneeId?: string;
+    projectId?: string;
+    search?: string;
+  }): Promise<Task[]> {
+    const cacheKey = this.generateCacheKey(params);
+    
+    try {
+      // Intenta obtener de Redis
+      const cached = await this.cache.get<Task[]>(cacheKey);
+      if (cached) {
+        return cached;
+      }
+    } catch (error) {
+      console.error('Error al acceder a Redis', error);
+      // Continúa con la consulta a DB si Redis falla
+    }
+
+    // Consulta a la base de datos
+    const result = await this.findFromDB(params);
+
+    try {
+      // Almacena en Redis (con manejo de error silencioso)
+      await this.cache.set(cacheKey, result, this.CACHE_TTL).catch(console.error);
+    } catch (error) {
+      console.error('Error al guardar en Redis', error);
+    }
+
+    return result;
+  }
+
+  private async findFromDB(params: any): Promise<Task[]> {
+    const where = this.buildWhereConditions(params);
+    
     return this.prisma.task.findMany({
-      where: { // Filtra DIRECTAMENTE en la base de datos
-        status: filterDto.status,
-        priority: filterDto.priority,
-        assigneeId: filterDto.assigneeId,
-        projectId: filterDto.projectId,
-        dueDate: {
-          gte: filterDto.dueDateFrom ? new Date(filterDto.dueDateFrom) : undefined,
-          lte: filterDto.dueDateTo ? new Date(filterDto.dueDateTo) : undefined,
-        },
-      },
-      include: { // Trae las relaciones en UNA sola consulta
+      where,
+      include: {
         assignee: true,
         project: true,
         tags: true,
       },
+      orderBy: { createdAt: 'desc' },
+      take: 100, // Límite por defecto
     });
+  }
+
+  private buildWhereConditions(params: any) {
+    const where: any = {};
+    
+    if (params.status) where.status = params.status;
+    if (params.priority) where.priority = params.priority;
+    if (params.assigneeId) where.assigneeId = params.assigneeId;
+    if (params.projectId) where.projectId = params.projectId;
+
+    if (params.search) {
+      where.OR = [
+        { title: { contains: params.search, mode: 'insensitive' } },
+        { description: { contains: params.search, mode: 'insensitive' } },
+      ];
+    }
+
+    return where;
+  }
+
+  private generateCacheKey(params: any): string {
+    const { status, priority, assigneeId, projectId, search } = params;
+    return `tasks:${status}:${priority}:${assigneeId}:${projectId}:${search}`;
+  }
+
+  async clearCache(): Promise<void> {
+    // Limpia todas las claves que comienzan con 'tasks:'
+    const keys = await this.cache.store.keys?.('tasks:*') || [];
+    await Promise.all(keys.map(key => this.cache.del(key)));
   }
 
   async findOne(id: string) {

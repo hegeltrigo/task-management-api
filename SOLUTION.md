@@ -1,60 +1,84 @@
-# Solution Documentation
+# 📝 Solution Documentation - Performance Optimization
 
-## Part 1: Performance Issues Fixed
+## 🚀 Part 1: Performance Issues Fixed
 
-### [Issue fixed]
+### 🔍 Issue Analysis
 
+#### **Problem Identified**
 
-**Problem Identified:**
+1. **API Response Times**  
+   - N+1 queries in `/tasks` endpoint:  
+     - Initial query: `this.prisma.task.findMany()`  
+     - Then for each task, separate queries for:  
+       - Assignee  
+       - Project  
+       - Tags  
+     - **Result**: 1 initial query + N additional queries  
 
-1. **API Response Times**
-n+1 querys in /tasks
-First, you fetch all the tasks (this.prisma.task.findMany()).
-Then, for each task, you make separate queries to fetch:
-the assignee, the project, the tags
-This results in 1 initial query + N additional queries (where N is the number of tasks).
+2. **Database Load**  
+   - Queries without indexes consume excessive PostgreSQL resources  
+   - `/tasks` endpoint forces DB to manually process filtering  
 
-2. **Database Load**
-Each query without indexes consumes more resources from the PostgreSQL server.
-The /tasks endpoint forces the DB to manually process filtering.
+3. **Search Performance**  
+   - Slow multi-filter searches (status, priority, assigneeId, projectId, search)  
+   - Inefficient text searches (title, description) with OR conditions causing full table scans  
+   - Poor pagination performance (LIMIT/OFFSET on large datasets)  
+   - Missing Redis caching for frequent queries  
 
-4. **Search Performance**
-Multi-filter searches (status, priority, assigneeId, projectId, search) were slow due to missing database indexes.
+---
 
-Text searches (title, description) with OR conditions triggered full table scans in PostgreSQL.
+### 🛠 Solutions Implemented
 
-Inefficient pagination (LIMIT/OFFSET performed poorly on large datasets).
+#### **1. API Response Times Optimization**
+- Optimized queries using `includes` for relations in `/tasks` endpoint  
+- Implemented eager loading for all related entities  
 
-Redis caching was not utilized for frequent queries.
+#### **2. Database Load Reduction**
+- Added indexes for:  
+  - All foreign keys  
+  - Frequently queried columns  
+  - Common filter combinations  
 
-**Solution Implemented:**
-1. **API Response Times**
-Optimize queries with includes for relations in /tasks.
-2. **Database Load**
-Added indexes for foreign keys and other frequently queried columns.
-4. **Search Performance**
-Database Optimization (Prisma/PostgreSQL): 
- - Composite indexes for common queries 
- - Optimized Pagination with replaced OFFSET with limit-based pagination (LIMIT 25) to   reduce load on large datasets
- - Added totalPages for efficient frontend navigation
-Cache Layer (Redis): 
- - Parameter-Based Caching
- - Automatic Cache Invalidation
-Query Optimization:
-  - Case-Insensitive Text Search
-  - Costly Query Protection with maximum limit of 100 items per request (MAX_LIMIT = 100)
-**Performance Impact:**
+#### **3. Search Performance Improvements**
+**Database Optimization (Prisma/PostgreSQL):**  
+- Created composite indexes for common query patterns  
+- Replaced OFFSET pagination with cursor-based pagination (`LIMIT 25`)  
+- Added `totalPages` for efficient frontend navigation  
 
-1. **API Response Times**
-for tasks
-Actual (N+1)	    ~500ms	~5000ms
-Optimized (join)	~50ms	~200ms
-actual ![alt text](image.png)
-optimized ![alt text](image-1.png)
-2. **Database Load**
-optimized after indexes ![alt text](image-2.png)
-4. **Search Performance**
-![alt text](image-3.png)
+**Cache Layer (Redis):**  
+- Parameter-based caching strategy  
+- Automatic cache invalidation on data changes  
+
+**Query Optimization:**  
+- Implemented case-insensitive text search  
+- Added query protection:  
+  - Maximum limit of 100 items per request (`MAX_LIMIT = 100`)  
+  - Timeout for complex queries  
+
+---
+
+### 📊 Performance Impact
+
+#### **1. API Response Times (Tasks Endpoint)**
+| Scenario          | 10 Tasks | 100 Tasks |
+|-------------------|---------|----------|
+| Before (N+1)      | ~500ms  | ~5000ms  |
+| After (Optimized) | ~50ms   | ~200ms   |
+
+**Visual Comparison:**  
+![Before Optimization](image.png)  
+*Fig. 1: Original performance*  
+
+![After Optimization](image-1.png)  
+*Fig. 2: Optimized performance*  
+
+#### **2. Database Load**
+![Database Performance After Indexes](image-2.png)  
+*Fig. 3: Improved database metrics*  
+
+#### **3. Search Performance**
+![Search Optimization Results](image-3.png)  
+*Fig. 4: Enhanced search performance*  
 
 ## Part 2: Activity Log Feature
 

@@ -13,7 +13,6 @@ export class TasksController {
   async findAll(@Query() params: FindAllTasksDto) {
     return this.tasksService.findAll(params);
   }
-
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.tasksService.findOne(id);

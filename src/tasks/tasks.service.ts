@@ -3,8 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
-import { TaskFilterDto } from './dto/task-filter.dto';
-import { Task, Prisma, TaskPriority, TaskStatus } from '@prisma/client';
+import { Task, TaskPriority, TaskStatus } from '@prisma/client';
 import { PaginationService } from '../common/pagination/pagination.service';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
@@ -100,7 +99,98 @@ export class TasksService {
     return task;
   }
   
-  async create(createTaskDto: CreateTaskDto) {
+  private async getSystemUser() {
+    const user = await this.prisma.user.findFirst({
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, name: true },
+    });
+
+    if (!user) {
+      throw new Error('No users found in database');
+    }
+
+    return user;
+  }
+
+  private async logTaskActivity(
+    taskId: string,
+    userId: string,
+    action: ActivityAction,
+    changes: Record<string, { old?: any; new?: any }>,
+  ) {
+    const task = await this.prisma.task.findUnique({
+      where: { id: taskId },
+      select: { title: true },
+    });
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    });
+
+    if (!task) throw new NotFoundException(`Task with ID ${taskId} not found`);
+    if (!user) throw new NotFoundException(`User with ID ${userId} not found`);
+
+    // La actividad se guardará exactamente con el formato especificado
+    await this.activitiesService.logActivity({
+      taskId,
+      taskTitle: task.title,
+      userId,
+      userName: user.name,
+      action,
+      changes,
+    });
+  }
+
+  async create(createTaskDto: CreateTaskDto, userId?: string) {
+    const effectiveUser = userId 
+      ? await this.prisma.user.findUnique({ 
+          where: { id: userId }, 
+          select: { id: true, name: true } 
+        })
+      : await this.getSystemUser();
+
+    if (!effectiveUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    // 1. Validar que el proyecto existe
+    const projectExists = await this.prisma.project.findUnique({
+      where: { id: createTaskDto.projectId },
+      select: { id: true }
+    });
+
+    if (!projectExists) {
+      throw new NotFoundException(`Project with ID ${createTaskDto.projectId} not found`);
+    }
+
+    // 2. Validar que el asignado existe (si se especificó)
+    if (createTaskDto.assigneeId) {
+      const assigneeExists = await this.prisma.user.findUnique({
+        where: { id: createTaskDto.assigneeId },
+        select: { id: true }
+      });
+
+      if (!assigneeExists) {
+        throw new NotFoundException(`User with ID ${createTaskDto.assigneeId} not found`);
+      }
+    }
+
+    // 3. Validar que los tags existen (si se especificaron)
+    if (createTaskDto.tagIds && createTaskDto.tagIds.length > 0) {
+      const existingTags = await this.prisma.tag.findMany({
+        where: { id: { in: createTaskDto.tagIds } },
+        select: { id: true }
+      });
+
+      if (existingTags.length !== createTaskDto.tagIds.length) {
+        const existingTagIds = existingTags.map(tag => tag.id);
+        const missingTags = createTaskDto.tagIds.filter(id => !existingTagIds.includes(id));
+        throw new NotFoundException(`Tags with IDs ${missingTags.join(', ')} not found`);
+      }
+    }
+
+    // Crear la tarea después de validar todo
     const task = await this.prisma.task.create({
       data: {
         title: createTaskDto.title,
@@ -109,7 +199,7 @@ export class TasksService {
         priority: createTaskDto.priority,
         dueDate: createTaskDto.dueDate,
         project: { connect: { id: createTaskDto.projectId } },
-        assignee: createTaskDto.assigneeId 
+        assignee: createTaskDto.assigneeId
           ? { connect: { id: createTaskDto.assigneeId } }
           : undefined,
         tags: createTaskDto.tagIds
@@ -123,23 +213,168 @@ export class TasksService {
       },
     });
 
+    // Registrar actividad
+    await this.logTaskActivity(
+      task.id,
+      effectiveUser.id,
+      ActivityAction.CREATED,
+      {
+        title: { new: task.title },
+        description: { new: task.description },
+        status: { new: task.status },
+        priority: { new: task.priority },
+        dueDate: { new: task.dueDate?.toISOString() },
+        projectId: { new: task.projectId },
+        assigneeId: { new: task.assigneeId },
+        tagIds: { new: task.tags.map(tag => tag.id) },
+      }
+    );
+
+    // Enviar notificación si tiene asignado
     if (task.assignee) {
-      await this.notificationsQueue.add('task-assigned', {
-        assigneeEmail: task.assignee.email,
-        taskTitle: task.title,
-      }, {
-        attempts: 3, // 3 reintentos
-        backoff: 5000, // 5 segundos entre intentos
-      });
+      await this.notificationsQueue.add(
+        'task-assigned',
+        {
+          assigneeEmail: task.assignee.email,
+          taskTitle: task.title,
+        },
+        {
+          attempts: 3,
+          backoff: 5000,
+        }
+      );
     }
 
     return task;
   }
 
-  async update(id: string, updateTaskDto: UpdateTaskDto) {
-    const existingTask = await this.findOne(id);
-    
-    const task = await this.prisma.task.update({
+  async update(id: string, updateTaskDto: UpdateTaskDto, userId?: string) {
+    // 1. Obtener usuario efectivo (el que realiza la acción)
+    const effectiveUser = userId 
+      ? await this.prisma.user.findUnique({ 
+          where: { id: userId }, 
+          select: { id: true, name: true } 
+        })
+      : await this.getSystemUser();
+
+    if (!effectiveUser) {
+      throw new NotFoundException('User not found');
+    }
+
+    // 2. Obtener tarea existente con sus relaciones
+    const existingTask = await this.prisma.task.findUnique({
+      where: { id },
+      include: { 
+        assignee: true, 
+        tags: true,
+        project: true 
+      },
+    });
+
+    if (!existingTask) {
+      throw new NotFoundException(`Task with ID ${id} not found`);
+    }
+
+    // 3. Validaciones de relaciones antes de actualizar
+    // Validar proyecto si se está cambiando
+    if (updateTaskDto.projectId && updateTaskDto.projectId !== existingTask.projectId) {
+      const projectExists = await this.prisma.project.findUnique({
+        where: { id: updateTaskDto.projectId },
+        select: { id: true }
+      });
+      if (!projectExists) {
+        throw new NotFoundException(`Project with ID ${updateTaskDto.projectId} not found`);
+      }
+    }
+
+    // Validar asignado si se está cambiando
+    if (updateTaskDto.assigneeId !== undefined && updateTaskDto.assigneeId !== existingTask.assigneeId) {
+      if (updateTaskDto.assigneeId) {
+        const assigneeExists = await this.prisma.user.findUnique({
+          where: { id: updateTaskDto.assigneeId },
+          select: { id: true, email: true }
+        });
+        if (!assigneeExists) {
+          throw new NotFoundException(`User with ID ${updateTaskDto.assigneeId} not found`);
+        }
+      }
+    }
+
+    // Validar tags si se están cambiando
+    if (updateTaskDto.tagIds !== undefined) {
+      const existingTags = await this.prisma.tag.findMany({
+        where: { id: { in: updateTaskDto.tagIds || [] } },
+        select: { id: true }
+      });
+      
+      if (updateTaskDto.tagIds && updateTaskDto.tagIds.length > 0) {
+        const existingTagIds = existingTags.map(tag => tag.id);
+        const missingTags = updateTaskDto.tagIds.filter(id => !existingTagIds.includes(id));
+        if (missingTags.length > 0) {
+          throw new NotFoundException(`Tags with IDs ${missingTags.join(', ')} not found`);
+        }
+      }
+    }
+
+    // 4. Preparar cambios para el registro de actividad
+    const changes: Record<string, { old?: any; new?: any }> = {};
+
+    if (updateTaskDto.title !== undefined && updateTaskDto.title !== existingTask.title) {
+      changes.title = {
+        old: existingTask.title,
+        new: updateTaskDto.title,
+      };
+    }
+
+    if (updateTaskDto.description !== undefined && updateTaskDto.description !== existingTask.description) {
+      changes.description = {
+        old: existingTask.description,
+        new: updateTaskDto.description,
+      };
+    }
+
+    if (updateTaskDto.status !== undefined && updateTaskDto.status !== existingTask.status) {
+      changes.status = {
+        old: existingTask.status,
+        new: updateTaskDto.status,
+      };
+    }
+
+    if (updateTaskDto.priority !== undefined && updateTaskDto.priority !== existingTask.priority) {
+      changes.priority = {
+        old: existingTask.priority,
+        new: updateTaskDto.priority,
+      };
+    }
+
+    if (updateTaskDto.dueDate !== undefined && updateTaskDto.dueDate?.toString() !== existingTask.dueDate?.toISOString()) {
+      changes.dueDate = {
+        old: existingTask.dueDate?.toISOString(),
+        new: updateTaskDto.dueDate?.toString(),
+      };
+    }
+
+    if (updateTaskDto.assigneeId !== undefined && updateTaskDto.assigneeId !== existingTask.assigneeId) {
+      changes.assigneeId = {
+        old: existingTask.assigneeId,
+        new: updateTaskDto.assigneeId,
+      };
+    }
+
+    if (updateTaskDto.tagIds !== undefined) {
+      const oldTagIds = existingTask.tags.map(tag => tag.id);
+      const newTagIds = updateTaskDto.tagIds || [];
+      
+      if (JSON.stringify(oldTagIds.sort()) !== JSON.stringify(newTagIds.sort())) {
+        changes.tagIds = {
+          old: oldTagIds,
+          new: newTagIds,
+        };
+      }
+    }
+
+    // 5. Actualizar la tarea
+    const updatedTask = await this.prisma.task.update({
       where: { id },
       data: {
         title: updateTaskDto.title,
@@ -147,13 +382,16 @@ export class TasksService {
         status: updateTaskDto.status,
         priority: updateTaskDto.priority,
         dueDate: updateTaskDto.dueDate,
+        project: updateTaskDto.projectId 
+          ? { connect: { id: updateTaskDto.projectId } }
+          : undefined,
         assignee: updateTaskDto.assigneeId !== undefined
-          ? updateTaskDto.assigneeId 
+          ? updateTaskDto.assigneeId
             ? { connect: { id: updateTaskDto.assigneeId } }
             : { disconnect: true }
           : undefined,
-        tags: updateTaskDto.tagIds
-          ? { set: updateTaskDto.tagIds.map(id => ({ id })) }
+        tags: updateTaskDto.tagIds !== undefined
+          ? { set: (updateTaskDto.tagIds || []).map(id => ({ id })) }
           : undefined,
       },
       include: {
@@ -163,29 +401,66 @@ export class TasksService {
       },
     });
 
-    // verify if assignee was changed and send notification
-    const assigneeChanged = updateTaskDto.assigneeId !== undefined && 
-                          updateTaskDto.assigneeId !== existingTask.assigneeId;
-    
-    if (assigneeChanged && task.assignee) {
-      await this.notificationsQueue.add('task-assigned', {
-        assigneeEmail: task.assignee.email,
-        taskTitle: task.title,
-      }, {
-        attempts: 3, // 3 tries
-        backoff: 5000, // 5 seconds between tries
-      });
+    // 6. Registrar actividad si hubo cambios
+    if (Object.keys(changes).length > 0) {
+      await this.logTaskActivity(
+        updatedTask.id,
+        effectiveUser.id,
+        ActivityAction.UPDATED,
+        changes
+      );
     }
 
-    return task;
+    // 7. Notificar si cambió el asignado
+    if (changes.assigneeId && updatedTask.assignee) {
+      await this.notificationsQueue.add(
+        'task-assigned',
+        {
+          assigneeEmail: updatedTask.assignee.email,
+          taskTitle: updatedTask.title,
+        },
+        {
+          attempts: 3,
+          backoff: 5000,
+        }
+      );
+    }
+
+    return updatedTask;
   }
 
-  async remove(id: string) {
-    await this.findOne(id);
-    
-    await this.prisma.task.delete({
+  async remove(id: string, userId?: string) {
+    const effectiveUser = userId 
+      ? await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true } })
+      : await this.getSystemUser();
+
+    const task = await this.prisma.task.findUnique({
       where: { id },
+      include: { assignee: true, tags: true },
     });
+
+    if (!task) {
+      throw new NotFoundException(`Task with ID ${id} not found`);
+    }
+
+    await this.prisma.task.delete({ where: { id } });
+
+    // Registrar actividad de eliminación
+    await this.logTaskActivity(
+      id,
+      effectiveUser.id,
+      ActivityAction.DELETED,
+      {
+        title: { old: task.title },
+        description: { old: task.description },
+        status: { old: task.status },
+        priority: { old: task.priority },
+        dueDate: { old: task.dueDate?.toISOString() },
+        projectId: { old: task.projectId },
+        assigneeId: { old: task.assigneeId },
+        tagIds: { old: task.tags.map(tag => tag.id) },
+      }
+    );
 
     return { message: 'Task deleted successfully' };
   }

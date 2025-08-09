@@ -27,6 +27,10 @@ export class UpdateTaskDto {
   assigneeId?: string | null;
 
   @IsOptional()
+  @IsUUID()
+  projectId?: string | null;
+
+  @IsOptional()
   @IsArray()
   @IsUUID('4', { each: true })
   tagIds?: string[];

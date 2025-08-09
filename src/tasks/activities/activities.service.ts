@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ActivityAction } from './constants';
 import { PaginationService } from '../../common/pagination/pagination.service';
+
 @Injectable()
 export class ActivitiesService {
   constructor(
@@ -9,25 +10,34 @@ export class ActivitiesService {
     private readonly paginationService: PaginationService
   ) {}
 
-  async logActivity(
-    taskId: string,
-    userId: string,
-    action: ActivityAction,
-    changes: Record<string, { old?: any; new?: any }>,
-  ): Promise<any> {
+  async logActivity(params: {
+    taskId: string;
+    userId: string;
+    action: ActivityAction;
+    changes: Record<string, { old?: any; new?: any }>;
+    taskTitle?: string;
+    userName?: string;
+  }): Promise<any> {
+    const { taskId, userId, action, changes, taskTitle, userName } = params;
+
+    // Buscar información adicional si no se proporciona
     const [task, user] = await Promise.all([
-      this.prisma.task.findUnique({
-        where: { id: taskId },
-        select: { title: true },
-      }),
-      this.prisma.user.findUnique({
-        where: { id: userId },
-        select: { name: true },
-      }),
+      taskTitle 
+        ? Promise.resolve({ title: taskTitle }) 
+        : this.prisma.task.findUnique({
+            where: { id: taskId },
+            select: { title: true },
+          }),
+      userName
+        ? Promise.resolve({ name: userName })
+        : this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { name: true },
+          }),
     ]);
 
-    if (!task) throw new Error(`Task with ID ${taskId} not found`);
-    if (!user) throw new Error(`User with ID ${userId} not found`);
+    if (!task) throw new NotFoundException(`Task with ID ${taskId} not found`);
+    if (!user) throw new NotFoundException(`User with ID ${userId} not found`);
 
     const activity = await this.prisma.activity.create({
       data: {

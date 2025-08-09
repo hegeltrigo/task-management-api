@@ -185,6 +185,9 @@ Contains activity ID, related task details, user details, action type, changes m
    - Move to dedicated Activity microservice
    - Implement Event Sourcing pattern
 
+4. **Test**:
+   I need more time to create test enviroment configuration and add more test
+
 ## Time Spent
 
 | Component | Hours | Notes |

@@ -14,6 +14,9 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+   // Añadimos el campo password (opcional si quieres implementar login tradicional)
+  password  String?  @db.VarChar(255)
+
   assignedTasks Task[]
 }
 

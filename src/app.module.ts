@@ -7,6 +7,7 @@ import { ProjectsModule } from './projects/projects.module';
 import { UsersModule } from './users/users.module';
 import { EmailModule } from './email/email.module';
 import { redisStore } from 'cache-manager-redis-yet';
+import { AuthModule } from './auth/auth.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { redisStore } from 'cache-manager-redis-yet';
     ProjectsModule,
     UsersModule,
     EmailModule,
+    AuthModule
   ],
 })
 export class AppModule {}

@@ -30,18 +30,36 @@ export class TasksService {
   }) {
     const where = this.buildWhereConditions(params);
 
-    return this.paginationService.paginate<Task>('task', {
+    const paginationResult = await this.paginationService.paginate<Task>('task', {
       where,
       include: {
-        assignee: true,
-        project: true,
-        tags: true,
+        assignee: {
+          select: {
+            id: true,
+            name: true,
+            email: true
+          }
+        },
+        project: {
+          select: {
+            id: true,
+            name: true
+          }
+        },
+        tags: {
+          select: {
+            id: true,
+            name: true
+          }
+        },
       },
       orderBy: { createdAt: 'desc' },
       page: params.page,
       limit: params.limit,
       cacheKeyPrefix: 'tasks',
     });
+
+    return paginationResult;
   }
 
   private buildWhereConditions(params: any) {
@@ -78,40 +96,6 @@ export class TasksService {
 
     return task;
   }
-
-  // async create(createTaskDto: CreateTaskDto) {
-  //   const task = await this.prisma.task.create({
-  //     data: {
-  //       title: createTaskDto.title,
-  //       description: createTaskDto.description,
-  //       status: createTaskDto.status,
-  //       priority: createTaskDto.priority,
-  //       dueDate: createTaskDto.dueDate,
-  //       project: { connect: { id: createTaskDto.projectId } },
-  //       assignee: createTaskDto.assigneeId 
-  //         ? { connect: { id: createTaskDto.assigneeId } }
-  //         : undefined,
-  //       tags: createTaskDto.tagIds
-  //         ? { connect: createTaskDto.tagIds.map(id => ({ id })) }
-  //         : undefined,
-  //     },
-  //     include: {
-  //       assignee: true,
-  //       project: true,
-  //       tags: true,
-  //     },
-  //   });
-
-  //   // PERFORMANCE ISSUE: Synchronous email notification blocking response
-  //   if (task.assignee) {
-  //     await this.emailService.sendTaskAssignmentNotification(
-  //       task.assignee.email,
-  //       task.title
-  //     );
-  //   }
-
-  //   return task;
-  // }
   
   async create(createTaskDto: CreateTaskDto) {
     const task = await this.prisma.task.create({
@@ -176,12 +160,18 @@ export class TasksService {
       },
     });
 
-    // PERFORMANCE ISSUE: Synchronous email notification blocking response
-    if (updateTaskDto.assigneeId && updateTaskDto.assigneeId !== existingTask.assigneeId) {
-      await this.emailService.sendTaskAssignmentNotification(
-        task.assignee!.email,
-        task.title
-      );
+    // verify if assignee was changed and send notification
+    const assigneeChanged = updateTaskDto.assigneeId !== undefined && 
+                          updateTaskDto.assigneeId !== existingTask.assigneeId;
+    
+    if (assigneeChanged && task.assignee) {
+      await this.notificationsQueue.add('task-assigned', {
+        assigneeEmail: task.assignee.email,
+        taskTitle: task.title,
+      }, {
+        attempts: 3, // 3 tries
+        backoff: 5000, // 5 seconds between tries
+      });
     }
 
     return task;

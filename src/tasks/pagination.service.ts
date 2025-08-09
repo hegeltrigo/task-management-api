@@ -24,7 +24,15 @@ export class PaginationService {
       limit?: number;
       cacheKeyPrefix?: string;
     }
-  ): Promise<{ data: T[]; total: number; page: number; totalPages: number }> {
+  ): Promise<{
+    data: T[];
+    meta: {
+      total: number;
+      page: number;
+      perPage: number;
+      totalPages: number;
+    };
+  }>  {
     const { take, skip, page } = this.calculatePagination(params);
     const cacheKey = this.generateCacheKey(model, params, take, page);
 
@@ -93,9 +101,12 @@ export class PaginationService {
   ) {
     return {
       data: result.data,
-      total: result.total,
-      page,
-      totalPages: Math.ceil(result.total / take),
+      meta: {
+        total: result.total,
+        page: page,
+        perPage: take,
+        totalPages: Math.ceil(result.total / take),
+      }
     };
   }
 

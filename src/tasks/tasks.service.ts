@@ -5,9 +5,11 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { TaskFilterDto } from './dto/task-filter.dto';
 import { Task, Prisma, TaskPriority, TaskStatus } from '@prisma/client';
-import { PaginationService } from './pagination.service';
+import { PaginationService } from '../common/pagination/pagination.service';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
+import { ActivitiesService } from './activities/activities.service';
+import { ActivityAction } from './activities/constants';
 
 @Injectable()
 export class TasksService {
@@ -16,6 +18,7 @@ export class TasksService {
     private prisma: PrismaService,
     private emailService: EmailService,
     private readonly paginationService: PaginationService,
+    private readonly activitiesService: ActivitiesService,
     @InjectQueue('notifications') private readonly notificationsQueue: Queue,
   ) {}
 

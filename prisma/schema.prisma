@@ -53,6 +53,21 @@ model Task {
   @@index([createdAt], name: "idx_task_created_at") 
 }
 
+model Activity {
+  id        String   @id @default(uuid())
+  taskId    String
+  userId    String
+  action    String
+  changes   Json
+  taskTitle String   // Campo denormalizado
+  userName  String   // Campo denormalizado
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
 model Tag {
   id        String   @id @default(uuid())
   name      String   @unique
@@ -74,3 +89,5 @@ enum TaskPriority {
   HIGH
   URGENT
 }
+
+

@@ -4,12 +4,14 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TasksController } from './tasks.controller';
 import { TasksService } from './tasks.service';
 import { EmailModule } from '../email/email.module';
-import { PaginationService } from './pagination.service';
 import { NotificationsProcessor } from './notifications.processor';
+import { ActivitiesModule } from './activities/activities.module';
+import { PaginationModule } from '../common/pagination/pagination.module'; // Importamos directamente
 
 @Module({
   imports: [
     EmailModule,
+    PaginationModule, 
     BullModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -23,11 +25,11 @@ import { NotificationsProcessor } from './notifications.processor';
     BullModule.registerQueue({
       name: 'notifications',
     }),
+    ActivitiesModule
   ],
   controllers: [TasksController],
   providers: [
     TasksService,
-    PaginationService,
     NotificationsProcessor,
   ],
 })

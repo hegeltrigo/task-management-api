@@ -20,7 +20,6 @@ export class ActivitiesService {
   }): Promise<any> {
     const { taskId, userId, action, changes, taskTitle, userName } = params;
 
-    // Buscar información adicional si no se proporciona
     const [task, user] = await Promise.all([
       taskTitle 
         ? Promise.resolve({ title: taskTitle }) 

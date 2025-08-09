@@ -154,7 +154,6 @@ export class TasksService {
       throw new NotFoundException('User not found');
     }
 
-    // 1. Validar que el proyecto existe
     const projectExists = await this.prisma.project.findUnique({
       where: { id: createTaskDto.projectId },
       select: { id: true }
@@ -164,7 +163,6 @@ export class TasksService {
       throw new NotFoundException(`Project with ID ${createTaskDto.projectId} not found`);
     }
 
-    // 2. Validar que el asignado existe (si se especificó)
     if (createTaskDto.assigneeId) {
       const assigneeExists = await this.prisma.user.findUnique({
         where: { id: createTaskDto.assigneeId },
@@ -176,7 +174,6 @@ export class TasksService {
       }
     }
 
-    // 3. Validar que los tags existen (si se especificaron)
     if (createTaskDto.tagIds && createTaskDto.tagIds.length > 0) {
       const existingTags = await this.prisma.tag.findMany({
         where: { id: { in: createTaskDto.tagIds } },
@@ -190,7 +187,6 @@ export class TasksService {
       }
     }
 
-    // Crear la tarea después de validar todo
     const task = await this.prisma.task.create({
       data: {
         title: createTaskDto.title,
@@ -213,7 +209,6 @@ export class TasksService {
       },
     });
 
-    // Registrar actividad
     await this.logTaskActivity(
       task.id,
       effectiveUser.id,
@@ -230,7 +225,6 @@ export class TasksService {
       }
     );
 
-    // Enviar notificación si tiene asignado
     if (task.assignee) {
       await this.notificationsQueue.add(
         'task-assigned',
@@ -249,7 +243,6 @@ export class TasksService {
   }
 
   async update(id: string, updateTaskDto: UpdateTaskDto, userId?: string) {
-    // 1. Obtener usuario efectivo (el que realiza la acción)
     const effectiveUser = userId 
       ? await this.prisma.user.findUnique({ 
           where: { id: userId }, 
@@ -261,7 +254,6 @@ export class TasksService {
       throw new NotFoundException('User not found');
     }
 
-    // 2. Obtener tarea existente con sus relaciones
     const existingTask = await this.prisma.task.findUnique({
       where: { id },
       include: { 
@@ -275,8 +267,6 @@ export class TasksService {
       throw new NotFoundException(`Task with ID ${id} not found`);
     }
 
-    // 3. Validaciones de relaciones antes de actualizar
-    // Validar proyecto si se está cambiando
     if (updateTaskDto.projectId && updateTaskDto.projectId !== existingTask.projectId) {
       const projectExists = await this.prisma.project.findUnique({
         where: { id: updateTaskDto.projectId },
@@ -287,7 +277,6 @@ export class TasksService {
       }
     }
 
-    // Validar asignado si se está cambiando
     if (updateTaskDto.assigneeId !== undefined && updateTaskDto.assigneeId !== existingTask.assigneeId) {
       if (updateTaskDto.assigneeId) {
         const assigneeExists = await this.prisma.user.findUnique({
@@ -300,7 +289,6 @@ export class TasksService {
       }
     }
 
-    // Validar tags si se están cambiando
     if (updateTaskDto.tagIds !== undefined) {
       const existingTags = await this.prisma.tag.findMany({
         where: { id: { in: updateTaskDto.tagIds || [] } },
@@ -316,7 +304,6 @@ export class TasksService {
       }
     }
 
-    // 4. Preparar cambios para el registro de actividad
     const changes: Record<string, { old?: any; new?: any }> = {};
 
     if (updateTaskDto.title !== undefined && updateTaskDto.title !== existingTask.title) {
@@ -373,7 +360,6 @@ export class TasksService {
       }
     }
 
-    // 5. Actualizar la tarea
     const updatedTask = await this.prisma.task.update({
       where: { id },
       data: {
@@ -401,7 +387,6 @@ export class TasksService {
       },
     });
 
-    // 6. Registrar actividad si hubo cambios
     if (Object.keys(changes).length > 0) {
       await this.logTaskActivity(
         updatedTask.id,
@@ -411,7 +396,6 @@ export class TasksService {
       );
     }
 
-    // 7. Notificar si cambió el asignado
     if (changes.assigneeId && updatedTask.assignee) {
       await this.notificationsQueue.add(
         'task-assigned',
@@ -445,7 +429,6 @@ export class TasksService {
 
     await this.prisma.task.delete({ where: { id } });
 
-    // Registrar actividad de eliminación
     await this.logTaskActivity(
       id,
       effectiveUser.id,

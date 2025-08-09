@@ -19,7 +19,7 @@ export class NotificationsProcessor {
       console.log(`Email sent to ${job.data.assigneeEmail}`);
     } catch (error) {
       console.error(`Failed to send email to ${job.data.assigneeEmail}`, error);
-      throw error; // Para reintentos automáticos
+      throw error; 
     }
   }
 }

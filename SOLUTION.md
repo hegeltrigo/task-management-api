@@ -105,28 +105,95 @@ Environment-aware configuration (dev/test/prod)
 
 ### Implementation Approach
 
-[Describe your overall approach to implementing the activity log]
+We implemented an **audit trail system** using these key strategies:
+
+1. **Decorator Pattern**: Wrapped core task operations to automatically log activities without modifying business logic
+2. **Atomic Transactions**: Ensured activity records are created within the same database transaction as task changes
+3. **Denormalized Data Model**: Stored frequently accessed user/task data directly in activity records
+4. **Pagination Service**: Refactored our existing pagination into a reusable `@Common` module
+5. **Redis Integration**: Used Redis for caching paginated results and sending real-time notifications
 
 ### Database Schema Design
 
-[Explain your schema choices]
+**Key Schema Decisions**:
+
+| Field | Type | Purpose | Optimization |
+|-------|------|---------|--------------|
+| `taskTitle` | String (denormalized) | Avoids join to `tasks` table | Faster reads |
+| `userName` | String (denormalized) | Avoids join to `users` table | Faster reads |
+| `changes` | JSONB | Stores field-level diffs | Flexible schema |
+| `action` | Enum | Constrained values | Better querying |
+
+**Index Strategy**:
+- Index by `taskId` for task history views  
+- Index by `userId` for user activity reports  
+- Index by `createdAt` for time-based queries  
+- Index by `(action, createdAt)` for activity type analysis  
 
 ### API Design Decisions
 
-[Explain your API design choices]
+**Endpoint Design**:
+
+1. **Task-Specific Activities**:  
+   Returns chronologically ordered activities and includes full change diffs by default.
+
+2. **Global Activity Feed**:  
+   Supports filtering by user, action type, and date ranges, using cursor-based pagination.
+
+**Response Structure**:  
+Contains activity ID, related task details, user details, action type, changes made, and timestamp.
 
 ### Performance Considerations
 
-[Describe any performance optimizations you implemented]
+1. **Read Optimizations**:
+   - Denormalized critical fields
+   - Covered indexes for common queries
+   - Redis caching for paginated results
+   - Lazy-loaded change details
+
+2. **Write Optimizations**:
+   - Batched updates for denormalized data
+   - Transactional consistency
+   - Async logging for non-critical paths
+
+3. **Pagination**:
+   - Implemented reusable pagination logic in a common service for multiple entities
+   - Redis cache layer to speed up repeated queries
 
 ### Trade-offs and Assumptions
 
-[List any trade-offs you made or assumptions about requirements]
+**Trade-offs**:
+- Immediate consistency chosen over eventual consistency for simpler debugging
+- Accepted 30% larger records for faster reads
+- Used JSONB for changes despite losing type safety
+
+**Assumptions**:
+1. Every feature depended on another, which led to designing implementations to be reusable across multiple scenarios and entities.
+2. Reusability was prioritized to avoid repetitive code and ensure consistency across the platform.
+3. The system needed flexibility to adapt to different entity types without major refactoring.
+4. UI would handle the presentation of diffs and changes.
 
 ## Future Improvements
 
-[Suggest potential improvements that could be made with more time]
+1. **Real-time Streaming**:  
+   Potential use of Server-Sent Events (SSE) for live updates.
+
+2. **Enhanced Search**:
+   - Integration with ElasticSearch or another search engine for advanced filtering and full-text search capabilities.
+
+3. **Architectural**:
+   - Move to dedicated Activity microservice
+   - Implement Event Sourcing pattern
 
 ## Time Spent
 
-[Document how long you spent on each part]
+| Component | Hours | Notes |
+|-----------|-------|-------|
+| Schema Design | 2 | Multiple iterations |
+| Core Service | 4 | Transaction handling |
+| API Layer | 3 | Pagination took 50% |
+| Refactoring | 2 | Pagination module |
+| **Total** | **11** | |
+
+**Key Challenge**: The pagination implementation required significant refactoring to make it truly reusable across different entities while maintaining type safety, accounting for ~30% of total development time.
+
